@@ -5,6 +5,8 @@ from __future__ import print_function
 
 import numpy as np
 import scipy.signal as signal
+import scipy as sp
+from keras.backend import floatx
 
 
 def normalize_conv(func):
@@ -141,6 +143,18 @@ pool2d = pool
 pool3d = pool
 
 
+def bias_add(x, y, data_format):
+    if data_format == 'channels_first':
+        if y.ndim > 1:
+            y = np.reshape(y, y.shape[::-1])
+        for _ in range(x.ndim - y.ndim - 1):
+            y = np.expand_dims(y, -1)
+    else:
+        for _ in range(x.ndim - y.ndim - 1):
+            y = np.expand_dims(y, 0)
+    return x + y
+
+
 def rnn(x, w, init, go_backwards=False, mask=None, unroll=False, input_length=None):
     w_i, w_h, w_o = w
     h = []
@@ -180,11 +194,50 @@ def rnn(x, w, init, go_backwards=False, mask=None, unroll=False, input_length=No
     return o[-1], np.stack(o, axis=1), np.stack(h, axis=1)
 
 
+_LEARNING_PHASE = True
+
+
+def learning_phase():
+    return _LEARNING_PHASE
+
+
+def set_learning_phase(value):
+    global _LEARNING_PHASE
+    _LEARNING_PHASE = value
+
+
+def in_train_phase(x, alt, training=None):
+    if training is None:
+        training = learning_phase()
+
+    if training is 1 or training is True:
+        if callable(x):
+            return x()
+        else:
+            return x
+    else:
+        if callable(alt):
+            return alt()
+        else:
+            return alt
+
+
+def in_test_phase(x, alt, training=None):
+    return in_train_phase(alt, x, training=training)
+
+
 def relu(x, alpha=0., max_value=None):
     y = x * (x > 0) + alpha * x * (x < 0)
     if max_value is not None:
         y = np.minimum(y, max_value)
     return y
+
+
+def switch(condition, then_expression, else_expression):
+    cond_float = condition.astype(floatx())
+    while cond_float.ndim < then_expression.ndim:
+        cond_float = cond_float[..., None]
+    return cond_float * then_expression + (1 - cond_float) * else_expression
 
 
 def softplus(x):
@@ -239,56 +292,50 @@ def categorical_crossentropy(target, output, from_logits=False):
 
 def max(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.max(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.max(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.max(x, axis=axis, keepdims=keepdims)
 
 
 def min(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.min(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.min(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.min(x, axis=axis, keepdims=keepdims)
 
 
 def mean(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.mean(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.mean(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.mean(x, axis=axis, keepdims=keepdims)
+
+
+def var(x, axis=None, keepdims=False):
+    if isinstance(axis, list):
+        axis = tuple(axis)
+    return np.var(x, axis=axis, keepdims=keepdims)
 
 
 def std(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.std(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.std(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.std(x, axis=axis, keepdims=keepdims)
+
+
+def logsumexp(x, axis=None, keepdims=False):
+    if isinstance(axis, list):
+        axis = tuple(axis)
+    return sp.misc.logsumexp(x, axis=axis, keepdims=keepdims)
 
 
 def sum(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.sum(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.sum(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.sum(x, axis=axis, keepdims=keepdims)
 
 
 def prod(x, axis=None, keepdims=False):
     if isinstance(axis, list):
-        for a in axis:
-            x = np.prod(x, axis=a, keepdims=keepdims)
-        return x
-    else:
-        return np.prod(x, axis=axis, keepdims=keepdims)
+        axis = tuple(axis)
+    return np.prod(x, axis=axis, keepdims=keepdims)
 
 
 def cumsum(x, axis=0):
@@ -300,10 +347,14 @@ def cumprod(x, axis=0):
 
 
 def any(x, axis=None, keepdims=False):
+    if isinstance(axis, list):
+        axis = tuple(axis)
     return np.any(x, axis=axis, keepdims=keepdims)
 
 
 def all(x, axis=None, keepdims=False):
+    if isinstance(axis, list):
+        axis = tuple(axis)
     return np.all(x, axis=axis, keepdims=keepdims)
 
 
@@ -329,6 +380,14 @@ def clip(x, min_value, max_value):
     return np.clip(x, min_value, max_value)
 
 
+def concatenate(tensors, axis=-1):
+    return np.concatenate(tensors, axis)
+
+
+def permute_dimensions(x, pattern):
+    return np.transpose(x, pattern)
+
+
 def reshape(x, shape):
     return np.reshape(x, shape)
 
@@ -337,7 +396,64 @@ def repeat_elements(x, rep, axis):
     return np.repeat(x, rep, axis=axis)
 
 
+def repeat(x, n):
+    y = np.expand_dims(x, 1)
+    y = np.repeat(y, n, axis=1)
+    return y
+
+
+def arange(start, stop=None, step=1, dtype='int32'):
+    return np.arange(start, stop, step, dtype)
+
+
+def flatten(x):
+    return np.reshape(x, (-1,))
+
+
+def batch_flatten(x):
+    return np.reshape(x, (x.shape[0], -1))
+
+
 def eval(x):
+    return x
+
+
+def dtype(x):
+    return x.dtype.name
+
+
+def constant(value, dtype=None, shape=None, name=None):
+    if dtype is None:
+        dtype = floatx()
+    if shape is None:
+        shape = ()
+    np_value = value * np.ones(shape)
+    np_value.astype(dtype)
+    return np_value
+
+
+def print_tensor(x, message=''):
+    print(x, message)
+    return x
+
+
+def eye(size, dtype=None, name=None):
+    return np.eye(size, dtype=dtype)
+
+
+def dot(x, y):
+    return np.dot(x, y)
+
+
+def transpose(x):
+    return np.transpose(x)
+
+
+def reverse(x, axes):
+    if isinstance(axes, int):
+        axes = [axes]
+    for a in axes:
+        x = np.flip(x, a)
     return x
 
 
@@ -380,9 +496,41 @@ def minimum(x, y):
     return np.minimum(x, y)
 
 
+def random_uniform_variable(shape, low, high, dtype=None, name=None, seed=None):
+    return (high - low) * np.random.random(shape).astype(dtype) + low
+
+
+def random_normal_variable(shape, mean, scale, dtype=None, name=None, seed=None):
+    return scale * np.random.randn(*shape).astype(dtype) + mean
+
+
+def resize_images(x, height_factor, width_factor, data_format):
+    if data_format == 'channels_first':
+        x = repeat_elements(x, height_factor, axis=2)
+        x = repeat_elements(x, width_factor, axis=3)
+    elif data_format == 'channels_last':
+        x = repeat_elements(x, height_factor, axis=1)
+        x = repeat_elements(x, width_factor, axis=2)
+    return x
+
+
+def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
+    if data_format == 'channels_first':
+        x = repeat_elements(x, depth_factor, axis=2)
+        x = repeat_elements(x, height_factor, axis=3)
+        x = repeat_elements(x, width_factor, axis=4)
+    elif data_format == 'channels_last':
+        x = repeat_elements(x, depth_factor, axis=1)
+        x = repeat_elements(x, height_factor, axis=2)
+        x = repeat_elements(x, width_factor, axis=3)
+    return x
+
+
 square = np.square
 abs = np.abs
 exp = np.exp
 log = np.log
 round = np.round
 sign = np.sign
+expand_dims = np.expand_dims
+squeeze = np.squeeze

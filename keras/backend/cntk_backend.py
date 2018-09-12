@@ -1156,17 +1156,20 @@ def permute_dimensions(x, pattern):
     return C.transpose(x, axis)
 
 
-def resize_images(x, height_factor, width_factor, data_format):
-    if data_format == 'channels_first':
-        output = repeat_elements(x, height_factor, axis=2)
-        output = repeat_elements(output, width_factor, axis=3)
-        return output
-    elif data_format == 'channels_last':
-        output = repeat_elements(x, height_factor, axis=1)
-        output = repeat_elements(output, width_factor, axis=2)
-        return output
+def resize_images(x, height_factor, width_factor, data_format, interpolation='nearest'):
+    if interpolation == 'nearest':
+        if data_format == 'channels_first':
+            output = repeat_elements(x, height_factor, axis=2)
+            output = repeat_elements(output, width_factor, axis=3)
+            return output
+        elif data_format == 'channels_last':
+            output = repeat_elements(x, height_factor, axis=1)
+            output = repeat_elements(output, width_factor, axis=2)
+            return output
+        else:
+            raise ValueError('CNTK Backend: Invalid data_format: %s' % data_format)
     else:
-        raise ValueError('CNTK Backend: Invalid data_format:', data_format)
+        raise NotImplementedError('CNTK only supports `nearest` interpolation.')
 
 
 def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
@@ -1181,7 +1184,7 @@ def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
         output = repeat_elements(output, width_factor, axis=3)
         return output
     else:
-        raise ValueError('CNTK Backend: Invalid data_format:', data_format)
+        raise ValueError('CNTK Backend: Invalid data_format: %s' % data_format)
 
 
 def repeat_elements(x, rep, axis):
@@ -1436,7 +1439,7 @@ def rnn(step_function, inputs, initial_states,
             for o, p in zip(new_states, place_holders):
                 n_s.append(o.replace_placeholders({p: o.output}))
             if len(n_s) > 0:
-                new_output = n_s[0]
+                new_output = n_s[-1]
             return new_output, n_s
 
         final_output, final_states = _recurrence(rnn_inputs, states, mask)
@@ -2183,7 +2186,7 @@ def in_top_k(predictions, targets, k):
 
 
 def conv2d_transpose(x, kernel, output_shape, strides=(1, 1),
-                     padding='valid', data_format=None):
+                     padding='valid', data_format=None, dilation_rate=(1, 1)):
     data_format = normalize_data_format(data_format)
 
     x = _preprocess_conv2d_input(x, data_format)
@@ -2205,7 +2208,8 @@ def conv2d_transpose(x, kernel, output_shape, strides=(1, 1),
             False,
             padding,
             padding],
-        output_shape=output_shape)
+        output_shape=output_shape,
+        dilation=dilation_rate)
     return _postprocess_conv2d_output(x, data_format)
 
 

@@ -102,9 +102,11 @@ def layer_test(layer_cls, kwargs={}, input_shape=None, input_dtype=None,
             _output = recovered_model.predict(input_data)
             assert_allclose(_output, actual_output, rtol=1e-3)
 
-        # test training mode (e.g. useful for dropout tests)
-        model.compile('rmsprop', 'mse')
-        model.train_on_batch(input_data, actual_output)
+        # test training mode (e.g. useful when the layer has a
+        # different behavior at training and testing time).
+        if has_arg(layer.call, 'training'):
+            model.compile('rmsprop', 'mse')
+            model.train_on_batch(input_data, actual_output)
         return actual_output
 
     # test in functional API
@@ -117,17 +119,12 @@ def layer_test(layer_cls, kwargs={}, input_shape=None, input_dtype=None,
 
     # check with the functional API
     model = Model(x, y)
-    _layer_in_model_test(model)
+    actual_output = _layer_in_model_test(model)
 
-    # test as first layer in Sequential API
+    # test instantiation from layer config
     layer_config = layer.get_config()
     layer_config['batch_input_shape'] = input_shape
     layer = layer.__class__.from_config(layer_config)
-
-    # check with the sequential API
-    model = Sequential()
-    model.add(layer)
-    actual_output = _layer_in_model_test(model)
 
     # for further checks in the caller function
     return actual_output
