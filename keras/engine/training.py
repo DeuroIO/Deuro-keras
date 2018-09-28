@@ -216,7 +216,8 @@ class Model(Network):
                 target_tensors = [target_tensors]
             else:
                 raise TypeError('Expected `target_tensors` to be a tensor, '
-                                'a list of tensors, or dict of tensors, but got:', target_tensors)
+                                'a list of tensors, or dict of tensors, but got:',
+                                target_tensors)
 
         for i in range(len(self.outputs)):
             if i in skip_target_indices:
@@ -382,13 +383,15 @@ class Model(Network):
                             metric_fn = metrics_module.binary_accuracy
                         elif metric in ('crossentropy', 'ce'):
                             metric_fn = metrics_module.binary_crossentropy
-                    elif self.loss_functions[i] == losses.sparse_categorical_crossentropy:
+                    elif (self.loss_functions[i] ==
+                          losses.sparse_categorical_crossentropy):
                         # case: categorical accuracy/crossentropy
                         # with sparse targets
                         if metric in ('accuracy', 'acc'):
                             metric_fn = metrics_module.sparse_categorical_accuracy
                         elif metric in ('crossentropy', 'ce'):
-                            metric_fn = metrics_module.sparse_categorical_crossentropy
+                            metric_fn = (
+                                metrics_module.sparse_categorical_crossentropy)
                     else:
                         # case: categorical accuracy/crossentropy
                         if metric in ('accuracy', 'acc'):
@@ -570,7 +573,8 @@ class Model(Network):
               when calling `fit`/etc.
             - if data tensors: the model is built on top of these tensors.
               We do not expect any Numpy data to be provided when calling `fit`/etc.
-          outputs: Optional output tensors (if already computed by running the model).
+          outputs: Optional output tensors (if already computed by running
+            the model).
           training: Boolean or None. Only relevant in symbolic mode. Specifies
             whether to build the model's graph in inference mode (False), training
             mode (True), or using the Keras learning phase (None).
@@ -596,10 +600,7 @@ class Model(Network):
         self._feed_inputs = []
         self._feed_input_names = []
         self._feed_input_shapes = []
-        if isinstance(inputs, (list, tuple)):
-            inputs = list(inputs)
-        else:
-            inputs = [inputs]
+        inputs = to_list(inputs, allow_tuple=True)
 
         for i, v in enumerate(inputs):
             name = 'input_%d' % (i + 1)
@@ -633,10 +634,7 @@ class Model(Network):
                 outputs = self.call(unpack_singleton(self.inputs), training=training)
             else:
                 outputs = self.call(unpack_singleton(self.inputs))
-        if isinstance(outputs, (list, tuple)):
-            outputs = list(outputs)
-        else:
-            outputs = [outputs]
+        outputs = to_list(outputs, allow_tuple=True)
         self.outputs = outputs
         self.output_names = [
             'output_%d' % (i + 1) for i in range(len(self.outputs))]
@@ -704,10 +702,7 @@ class Model(Network):
                                          'You passed: y=' + str(y))
                 # Typecheck that all inputs are *either* value *or* symbolic.
                 if y is not None:
-                    if isinstance(y, (list, tuple)):
-                        all_inputs += list(y)
-                    else:
-                        all_inputs.append(y)
+                    all_inputs += to_list(y, allow_tuple=True)
                 if any(K.is_tensor(v) for v in all_inputs):
                     if not all(K.is_tensor(v) for v in all_inputs):
                         raise ValueError('Do not pass inputs that mix Numpy '
@@ -716,8 +711,7 @@ class Model(Network):
                                          '; y=' + str(y))
 
                 # Handle target tensors if any passed.
-                if not isinstance(y, (list, tuple)):
-                    y = [y]
+                y = to_list(y, allow_tuple=True)
                 target_tensors = [v for v in y if K.is_tensor(v)]
                 if not target_tensors:
                     target_tensors = None
@@ -1294,7 +1288,8 @@ class Model(Network):
                       use_multiprocessing=False,
                       shuffle=True,
                       initial_epoch=0):
-        """Trains the model on data generated batch-by-batch by a Python generator (or an instance of `Sequence`).
+        """Trains the model on data generated batch-by-batch by a Python generator
+        (or an instance of `Sequence`).
 
         The generator is run in parallel to the model, for efficiency.
         For instance, this allows you to do real-time data augmentation

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import string
 
-from keras.utils.test_utils import get_test_data, keras_test
+from keras.utils.test_utils import get_test_data
 from keras.utils.np_utils import to_categorical
 from keras.models import Sequential
 from keras import layers, optimizers
@@ -11,7 +11,6 @@ import keras.backend as K
 import keras
 
 
-@keras_test
 def test_temporal_classification():
     '''
     Classify temporal sequences of float numbers
@@ -44,7 +43,6 @@ def test_temporal_classification():
     model = Sequential.from_config(config)
 
 
-@keras_test
 def test_temporal_classification_functional():
     '''
     Classify temporal sequences of float numbers
@@ -74,7 +72,6 @@ def test_temporal_classification_functional():
     assert(history.history['acc'][-1] >= 0.8)
 
 
-@keras_test
 def test_temporal_regression():
     '''
     Predict float numbers (regression) based on sequences
@@ -95,7 +92,6 @@ def test_temporal_regression():
     assert(history.history['loss'][-1] < 1.)
 
 
-@keras_test
 def test_3d_to_3d():
     '''
     Apply a same Dense layer for each element of time dimension of the input
@@ -119,7 +115,6 @@ def test_3d_to_3d():
     assert(history.history['loss'][-1] < 1.)
 
 
-@keras_test
 def test_stacked_lstm_char_prediction():
     '''
     Learn alphabetical char sequence with stacked LSTM.
@@ -173,7 +168,6 @@ def test_stacked_lstm_char_prediction():
     assert(generated == alphabet)
 
 
-@keras_test
 def test_masked_temporal():
     '''
     Confirm that even with masking on both inputs and outputs, cross-entropies are
@@ -186,20 +180,22 @@ def test_masked_temporal():
     The ground-truth best cross-entropy loss should, then be -log(0.5) = 0.69
 
     '''
+    np.random.seed(1338)
+
     model = Sequential()
     model.add(layers.Embedding(10, 10, mask_zero=True))
     model.add(layers.Activation('softmax'))
     model.compile(loss='categorical_crossentropy',
                   optimizer='adam')
 
-    x = np.random.random_integers(1, 9, (20000, 10))
+    x = np.random.randint(1, 10, size=(20000, 10))
     for rowi in range(x.shape[0]):
-        padding = np.random.random_integers(x.shape[1] / 2)
+        padding = np.random.randint(0, x.shape[1] / 2 + 1)
         x[rowi, :padding] = 0
 
     # 50% of the time the correct output is the input.
     # The other 50% of the time it's 2 * input % 10
-    y = (x * np.random.random_integers(1, 2, x.shape)) % 10
+    y = (x * np.random.randint(1, 3, size=x.shape)) % 10
     ys = np.zeros((y.size, 10), dtype='int32')
     for i, target in enumerate(y.flat):
         ys[i, target] = 1
@@ -212,7 +208,6 @@ def test_masked_temporal():
 
 
 @pytest.mark.skipif(K.backend() != 'tensorflow', reason='Requires TF backend')
-@keras_test
 def test_embedding_with_clipnorm():
     model = Sequential()
     model.add(layers.Embedding(input_dim=1, output_dim=1))

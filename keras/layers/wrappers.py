@@ -276,7 +276,8 @@ class TimeDistributed(Wrapper):
         If the output mask at each time step is not `None`:
         (E.g., inner layer is Masking or RNN)
         Concatenate all of them and return the concatenation.
-        If the output mask at each time step is `None` and the input mask is not `None`:
+        If the output mask at each time step is `None` and
+        the input mask is not `None`:
         (E.g., inner layer is Dense)
         Reduce the input_mask to 2 dimensions and return it.
         Otherwise (both the output mask and the input mask are `None`):
@@ -538,6 +539,8 @@ class Bidirectional(Wrapper):
             output = y * y_rev
         elif self.merge_mode is None:
             output = [y, y_rev]
+        else:
+            raise ValueError('Unrecognized value for argument merge_mode: %s' % (self.merge_mode))
 
         # Properly set learning phase
         if (getattr(y, '_uses_learning_phase', False) or

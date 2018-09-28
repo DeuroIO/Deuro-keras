@@ -5,7 +5,6 @@ from numpy.testing import assert_allclose
 import keras
 from keras import metrics
 from keras import backend as K
-from keras.utils.test_utils import keras_test
 
 all_metrics = [
     metrics.binary_accuracy,
@@ -29,7 +28,6 @@ all_sparse_metrics = [
 ]
 
 
-@keras_test
 def test_metrics():
     y_a = K.variable(np.random.random((6, 7)))
     y_b = K.variable(np.random.random((6, 7)))
@@ -39,7 +37,6 @@ def test_metrics():
         assert K.eval(output).shape == (6,)
 
 
-@keras_test
 def test_sparse_metrics():
     for metric in all_sparse_metrics:
         y_a = K.variable(np.random.randint(0, 7, (6,)), dtype=K.floatx())
@@ -47,7 +44,6 @@ def test_sparse_metrics():
         assert K.eval(metric(y_a, y_b)).shape == (6,)
 
 
-@keras_test
 def test_sparse_categorical_accuracy_correctness():
     y_a = K.variable(np.random.randint(0, 7, (6,)), dtype=K.floatx())
     y_b = K.variable(np.random.random((6, 7)), dtype=K.floatx())
@@ -84,7 +80,6 @@ def test_invalid_get():
 
 @pytest.mark.skipif((K.backend() == 'cntk'),
                     reason='CNTK backend does not support top_k yet')
-@keras_test
 def test_top_k_categorical_accuracy():
     y_pred = K.variable(np.array([[0.3, 0.2, 0.1], [0.1, 0.2, 0.7]]))
     y_true = K.variable(np.array([[0, 1, 0], [1, 0, 0]]))
@@ -101,10 +96,15 @@ def test_top_k_categorical_accuracy():
 
 @pytest.mark.skipif((K.backend() == 'cntk'),
                     reason='CNTK backend does not support top_k yet')
-@keras_test
-def test_sparse_top_k_categorical_accuracy():
-    y_pred = K.variable(np.array([[0.3, 0.2, 0.1], [0.1, 0.2, 0.7]]))
-    y_true = K.variable(np.array([[1], [0]]))
+@pytest.mark.parametrize('y_pred, y_true', [
+    # Test correctness if the shape of y_true is (num_samples, 1)
+    (np.array([[0.3, 0.2, 0.1], [0.1, 0.2, 0.7]]), np.array([[1], [0]])),
+    # Test correctness if the shape of y_true is (num_samples,)
+    (np.array([[0.3, 0.2, 0.1], [0.1, 0.2, 0.7]]), np.array([1, 0])),
+])
+def test_sparse_top_k_categorical_accuracy(y_pred, y_true):
+    y_pred = K.variable(y_pred)
+    y_true = K.variable(y_true)
     success_result = K.eval(
         metrics.sparse_top_k_categorical_accuracy(y_true, y_pred, k=3))
 
@@ -119,7 +119,6 @@ def test_sparse_top_k_categorical_accuracy():
     assert failure_result == 0
 
 
-@keras_test
 @pytest.mark.parametrize('metrics_mode', ['list', 'dict'])
 def test_stateful_metrics(metrics_mode):
     np.random.seed(1334)

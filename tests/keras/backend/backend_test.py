@@ -3,7 +3,6 @@ from numpy.testing import assert_allclose
 import numpy as np
 import scipy.sparse as sparse
 import warnings
-from keras.utils.test_utils import keras_test
 
 from keras import backend as K
 from keras.backend import floatx, set_floatx, variable
@@ -38,6 +37,21 @@ except ImportError:
 WITH_NP = [KTH if K.backend() == 'theano' else KC if K.backend() == 'cntk' else KTF, KNP]
 
 
+# CNTK only supports dilated convolution on GPU
+def get_dilated_conv_backends():
+    backend_list = []
+    if KTF is not None:
+        backend_list.append(KTF)
+    if KTH is not None:
+        backend_list.append(KTH)
+    if KC is not None and KC.dev.type() == 1:
+        backend_list.append(KC)
+    return backend_list
+
+
+DILATED_CONV_BACKENDS = get_dilated_conv_backends()
+
+
 def check_dtype(var, dtype):
     if K._BACKEND == 'theano':
         assert var.dtype == dtype
@@ -45,28 +59,20 @@ def check_dtype(var, dtype):
         assert var.dtype.name == '%s_ref' % dtype
 
 
-def cntk_func_single_tensor(function_name, x_shape, **kwargs):
-    xc = KC.placeholder(x_shape)
-    output_cntk = getattr(KC, function_name)(xc, **kwargs)
-    return output_cntk, KC.function([xc], [output_cntk])
+def cntk_func_tensors(function_name, shapes_or_vals, **kwargs):
+    placeholders = []
+    variables = []
+    for shape_or_val in shapes_or_vals:
+        if isinstance(shape_or_val, tuple):
+            shape = shape_or_val
+            placeholders.append(KC.placeholder(shape))
+        else:
+            value = shape_or_val
+            variables.append(KC.variable(value))
 
-
-def cntk_func_two_tensor(function_name, x_shape, y, **kwargs):
-    if isinstance(y, (np.generic, np.ndarray)):
-        xc = KC.placeholder(x_shape)
-        output_cntk = getattr(KC, function_name)(xc, KC.variable(y), **kwargs)
-        return output_cntk, KC.function([xc], [output_cntk])
-    else:
-        xc = KC.placeholder(ndim=len(x_shape))
-        yc = KC.placeholder(y)
-        output_cntk = getattr(KC, function_name)(xc, yc, **kwargs)
-        return output_cntk, KC.function([xc, yc], [output_cntk])
-
-
-def cntk_func_three_tensor(function_name, x_shape, y, z, **kwargs):
-    xc = KC.placeholder(x_shape)
-    output_cntk = getattr(KC, function_name)(xc, KC.variable(y), KC.variable(z), **kwargs)
-    return KC.function([xc], [output_cntk])
+    output_cntk = getattr(KC, function_name)(*(placeholders + variables), **kwargs)
+    cntk_func = KC.function(placeholders, [output_cntk])
+    return output_cntk, cntk_func
 
 
 def parse_shape_or_val(shape_or_val):
@@ -94,7 +100,6 @@ def assert_list_keras_shape(t_list, z_list):
                     assert t._keras_shape[i] == z.shape[i]
 
 
-@keras_test
 def check_single_tensor_operation(function_name, x_shape_or_val, backend_list, **kwargs):
     shape_or_val = kwargs.pop('shape_or_val', True)
     assert_value_equality = kwargs.pop('assert_value_equality', True)
@@ -108,7 +113,7 @@ def check_single_tensor_operation(function_name, x_shape_or_val, backend_list, *
     for k in backend_list:
         if shape_or_val:
             if (k == KC) & (cntk_dynamicity):
-                t, f = cntk_func_single_tensor(function_name, x_shape, **kwargs)
+                t, f = cntk_func_tensors(function_name, [x_shape], **kwargs)
                 z = f([x_val])[0]
             else:
                 t = getattr(k, function_name)(k.variable(x_val), **kwargs)
@@ -123,7 +128,6 @@ def check_single_tensor_operation(function_name, x_shape_or_val, backend_list, *
     assert_list_keras_shape(t_list, z_list)
 
 
-@keras_test
 def check_two_tensor_operation(function_name, x_shape_or_val,
                                y_shape_or_val, backend_list, **kwargs):
     concat_args = kwargs.pop('concat_args', False)
@@ -137,10 +141,10 @@ def check_two_tensor_operation(function_name, x_shape_or_val,
     z_list = []
     for k in backend_list:
         if (k == KC) & (cntk_dynamicity):
-            t, f = cntk_func_two_tensor(function_name, x_shape, y=y_val, **kwargs)
+            t, f = cntk_func_tensors(function_name, [x_shape, y_val], **kwargs)
             z = f([x_val])[0]
         elif (k == KC) & (cntk_two_dynamicity):
-            t, f = cntk_func_two_tensor(function_name, x_shape, y=y_shape, **kwargs)
+            t, f = cntk_func_tensors(function_name, [x_shape, y_shape], **kwargs)
             z = f([x_val, y_val])[0]
         elif (k == KTH) & (function_name[:4] == 'conv'):
             t = getattr(k, function_name)(
@@ -161,7 +165,6 @@ def check_two_tensor_operation(function_name, x_shape_or_val,
     assert_list_keras_shape(t_list, z_list)
 
 
-@keras_test
 def check_composed_tensor_operations(first_function_name, first_function_args,
                                      second_function_name, second_function_args,
                                      input_shape, backend_list):
@@ -297,8 +300,8 @@ class TestBackend(object):
     def test_tile(self):
         shape = (3, 4)
         arr = np.arange(np.prod(shape)).reshape(shape)
-        check_single_tensor_operation('tile', arr, BACKENDS, n=[2, 1])
-        check_single_tensor_operation('tile', (2, 5), BACKENDS, n=[5, 2])
+        check_single_tensor_operation('tile', arr, WITH_NP, n=[2, 1])
+        check_single_tensor_operation('tile', (2, 5), WITH_NP, n=[5, 2])
 
         # test theano shape inference when
         # input shape has None entries
@@ -1025,6 +1028,7 @@ class TestBackend(object):
     @pytest.mark.parametrize('op,input_shape,kernel_shape,padding,data_format', [
         ('conv1d', (2, 8, 2), (3, 2, 3), 'same', 'channels_last'),
         ('conv1d', (1, 8, 2), (3, 2, 3), 'valid', 'channels_last'),
+        ('conv1d', (1, 2, 8), (3, 2, 3), 'valid', 'channels_first'),
         ('conv2d', (2, 3, 4, 5), (3, 3, 3, 2), 'same', 'channels_first'),
         ('conv2d', (2, 3, 5, 6), (4, 3, 3, 4), 'valid', 'channels_first'),
         ('conv2d', (1, 6, 5, 3), (3, 4, 3, 2), 'valid', 'channels_last'),
@@ -1038,6 +1042,38 @@ class TestBackend(object):
         check_two_tensor_operation(
             op, input_shape, kernel_shape, WITH_NP,
             padding=padding, data_format=data_format,
+            cntk_dynamicity=True)
+
+    @pytest.mark.skipif((K.backend() == 'cntk' and K.dev.type() == 0),
+                        reason='cntk only supports dilated conv on GPU')
+    @pytest.mark.parametrize('op,input_shape,kernel_shape,padding,data_format,dilation_rate', [
+        ('conv1d', (2, 8, 3), (4, 3, 2), 'valid', 'channels_last', 2),
+        ('conv1d', (2, 3, 8), (4, 3, 2), 'valid', 'channels_first', 2),
+        ('conv2d', (2, 8, 9, 3), (3, 3, 3, 2), 'same', 'channels_last', (2, 2)),
+        ('conv2d', (2, 3, 9, 8), (4, 3, 3, 4), 'valid', 'channels_first', (2, 2)),
+        ('conv3d', (2, 5, 4, 6, 3), (2, 2, 3, 3, 4), 'valid', 'channels_last', (2, 2, 2)),
+        ('conv3d', (2, 3, 5, 4, 6), (2, 2, 3, 3, 4), 'same', 'channels_first', (2, 2, 2)),
+    ])
+    def test_conv_dilation(self, op, input_shape, kernel_shape, padding,
+                           data_format, dilation_rate):
+        check_two_tensor_operation(
+            op, input_shape, kernel_shape, DILATED_CONV_BACKENDS, padding=padding,
+            data_format=data_format, dilation_rate=dilation_rate, cntk_dynamicity=True)
+
+    @pytest.mark.skipif((K.backend() == 'cntk' and K.dev.type() == 0),
+                        reason='cntk only supports dilated conv transpose on GPU')
+    @pytest.mark.parametrize(
+        'op,input_shape,kernel_shape,output_shape,padding,data_format,dilation_rate', [
+            ('conv2d_transpose', (2, 5, 6, 3), (3, 3, 2, 3), (2, 5, 6, 2),
+             'same', 'channels_last', (2, 2)),
+            ('conv2d_transpose', (2, 3, 8, 9), (3, 3, 2, 3), (2, 2, 8, 9),
+             'same', 'channels_first', (2, 2)),
+        ])
+    def test_conv_transpose_dilation(self, op, input_shape, kernel_shape, output_shape,
+                                     padding, data_format, dilation_rate):
+        check_two_tensor_operation(
+            op, input_shape, kernel_shape, DILATED_CONV_BACKENDS, output_shape=output_shape,
+            padding=padding, data_format=data_format, dilation_rate=dilation_rate,
             cntk_dynamicity=True)
 
     @pytest.mark.parametrize('op,input_shape,kernel_shape,padding,data_format', [
@@ -1131,10 +1167,10 @@ class TestBackend(object):
         y1 = KNP.separable_conv(x, depthwise, pointwise,
                                 padding=padding, data_format=data_format)
         if K.backend() == 'cntk':
-            y2 = cntk_func_three_tensor(
-                op, input_shape,
-                depthwise, pointwise,
-                padding=padding, data_format=data_format)([x])[0]
+            _, cntk_func = cntk_func_tensors(
+                op, [input_shape, depthwise, pointwise],
+                padding=padding, data_format=data_format)
+            y2 = cntk_func([x])[0]
         else:
             y2 = K.eval(getattr(K, op)(
                 K.variable(x),
