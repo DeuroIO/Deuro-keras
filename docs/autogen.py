@@ -80,6 +80,7 @@ from keras import models
 from keras import losses
 from keras import metrics
 from keras import backend
+from keras import constraints
 from keras import activations
 from keras import preprocessing
 
@@ -91,6 +92,7 @@ if sys.version[0] == '2':
 
 EXCLUDE = {
     'Optimizer',
+    'TFOptimizer',
     'Wrapper',
     'get_session',
     'set_session',
@@ -173,6 +175,7 @@ PAGES = [
             layers.SeparableConv2D,
             layers.Conv2DTranspose,
             layers.Conv3D,
+            layers.Conv3DTranspose,
             layers.Cropping1D,
             layers.Cropping2D,
             layers.Cropping3D,
@@ -324,6 +327,10 @@ PAGES = [
     {
         'page': 'backend.md',
         'all_module_functions': [backend],
+    },
+    {
+        'page': 'constraints.md',
+        'all_module_classes': [constraints],
     },
     {
         'page': 'utils.md',

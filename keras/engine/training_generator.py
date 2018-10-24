@@ -33,7 +33,6 @@ def fit_generator(model,
                   shuffle=True,
                   initial_epoch=0):
     """See docstring for `Model.fit_generator`."""
-    wait_time = 0.01  # in seconds
     epoch = initial_epoch
 
     do_validation = bool(validation_data)
@@ -124,7 +123,8 @@ def fit_generator(model,
             elif val_gen:
                 val_data = validation_data
                 if isinstance(val_data, Sequence):
-                    val_enqueuer_gen = iter_sequence_infinite(generator)
+                    val_enqueuer_gen = iter_sequence_infinite(val_data)
+                    validation_steps = validation_steps or len(val_data)
                 else:
                     val_enqueuer_gen = val_data
             else:
@@ -157,8 +157,7 @@ def fit_generator(model,
             else:
                 enqueuer = GeneratorEnqueuer(
                     generator,
-                    use_multiprocessing=use_multiprocessing,
-                    wait_time=wait_time)
+                    use_multiprocessing=use_multiprocessing)
             enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             output_generator = enqueuer.get()
         else:
@@ -283,7 +282,6 @@ def evaluate_generator(model, generator,
         stateful_metric_indices = []
 
     steps_done = 0
-    wait_time = 0.01
     outs_per_batch = []
     batch_sizes = []
     is_sequence = isinstance(generator, Sequence)
@@ -312,8 +310,7 @@ def evaluate_generator(model, generator,
             else:
                 enqueuer = GeneratorEnqueuer(
                     generator,
-                    use_multiprocessing=use_multiprocessing,
-                    wait_time=wait_time)
+                    use_multiprocessing=use_multiprocessing)
             enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             output_generator = enqueuer.get()
         else:
@@ -389,7 +386,6 @@ def predict_generator(model, generator,
     model._make_predict_function()
 
     steps_done = 0
-    wait_time = 0.01
     all_outs = []
     is_sequence = isinstance(generator, Sequence)
     if not is_sequence and use_multiprocessing and workers > 1:
@@ -417,8 +413,7 @@ def predict_generator(model, generator,
             else:
                 enqueuer = GeneratorEnqueuer(
                     generator,
-                    use_multiprocessing=use_multiprocessing,
-                    wait_time=wait_time)
+                    use_multiprocessing=use_multiprocessing)
             enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             output_generator = enqueuer.get()
         else:

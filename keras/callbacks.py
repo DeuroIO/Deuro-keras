@@ -13,7 +13,6 @@ import time
 import json
 import warnings
 import io
-import sys
 
 from collections import deque
 from collections import OrderedDict
@@ -117,9 +116,10 @@ class CallbackList(object):
         delta_t_median = np.median(self._delta_ts_batch_end)
         if (self._delta_t_batch > 0. and
            (delta_t_median > 0.95 * self._delta_t_batch and delta_t_median > 0.1)):
-            warnings.warn('Method on_batch_end() is slow compared '
-                          'to the batch update (%f). Check your callbacks.'
-                          % delta_t_median)
+            warnings.warn('In your callbacks, method `on_batch_end()` '
+                          'is slow compared to a model step '
+                          '(%f vs %f). Check your callbacks.'
+                          % (delta_t_median, self._delta_t_batch))
 
     def on_train_begin(self, logs=None):
         """Called at the beginning of training.
@@ -717,8 +717,14 @@ class TensorBoard(Callback):
         embeddings_data: data to be embedded at layers specified in
             `embeddings_layer_names`. Numpy array (if the model has a single
             input) or list of Numpy arrays (if the model has multiple inputs).
-            Learn [more about embeddings]
-            (https://www.tensorflow.org/programmers_guide/embedding).
+            Learn [more about embeddings](
+            https://www.tensorflow.org/programmers_guide/embedding).
+        update_freq: `'batch'` or `'epoch'` or integer. When using `'batch'`, writes
+            the losses and metrics to TensorBoard after each batch. The same
+            applies for `'epoch'`. If using an integer, let's say `10000`,
+            the callback will write the metrics and losses to TensorBoard every
+            10000 samples. Note that writing too frequently to TensorBoard
+            can slow down your training.
     """
 
     def __init__(self, log_dir='./logs',
@@ -730,7 +736,8 @@ class TensorBoard(Callback):
                  embeddings_freq=0,
                  embeddings_layer_names=None,
                  embeddings_metadata=None,
-                 embeddings_data=None):
+                 embeddings_data=None,
+                 update_freq='epoch'):
         super(TensorBoard, self).__init__()
         global tf, projector
         try:
@@ -769,6 +776,13 @@ class TensorBoard(Callback):
         self.embeddings_metadata = embeddings_metadata or {}
         self.batch_size = batch_size
         self.embeddings_data = embeddings_data
+        if update_freq == 'batch':
+            # It is the same as writing as frequently as possible.
+            self.update_freq = 1
+        else:
+            self.update_freq = update_freq
+        self.samples_seen = 0
+        self.samples_seen_at_last_write = 0
 
     def set_model(self, model):
         self.model = model
@@ -776,7 +790,6 @@ class TensorBoard(Callback):
             self.sess = K.get_session()
         if self.histogram_freq and self.merged is None:
             for layer in self.model.layers:
-
                 for weight in layer.weights:
                     mapped_weight_name = weight.name.replace(':', '_')
                     tf.summary.histogram(mapped_weight_name, weight)
@@ -872,8 +885,6 @@ class TensorBoard(Callback):
 
             self.saver = tf.train.Saver(list(embeddings_vars.values()))
 
-            embeddings_metadata = {}
-
             if not isinstance(self.embeddings_metadata, str):
                 embeddings_metadata = self.embeddings_metadata
             else:
@@ -968,6 +979,13 @@ class TensorBoard(Callback):
 
                     i += self.batch_size
 
+        if self.update_freq == 'epoch':
+            index = epoch
+        else:
+            index = self.samples_seen
+        self._write_logs(logs, index)
+
+    def _write_logs(self, logs, index):
         for name, value in logs.items():
             if name in ['batch', 'size']:
                 continue
@@ -978,11 +996,19 @@ class TensorBoard(Callback):
             else:
                 summary_value.simple_value = value
             summary_value.tag = name
-            self.writer.add_summary(summary, epoch)
+            self.writer.add_summary(summary, index)
         self.writer.flush()
 
     def on_train_end(self, _):
         self.writer.close()
+
+    def on_batch_end(self, batch, logs=None):
+        if self.update_freq != 'epoch':
+            self.samples_seen += logs['size']
+            samples_seen_since = self.samples_seen - self.samples_seen_at_last_write
+            if samples_seen_since >= self.update_freq:
+                self._write_logs(logs, self.samples_seen)
+                self.samples_seen_at_last_write = self.samples_seen
 
 
 class ReduceLROnPlateau(Callback):

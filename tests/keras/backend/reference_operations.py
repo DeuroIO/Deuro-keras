@@ -7,6 +7,7 @@ import numpy as np
 import scipy.signal as signal
 import scipy as sp
 from keras.backend import floatx
+from keras.utils.generic_utils import transpose_shape
 
 
 def normalize_conv(func):
@@ -28,6 +29,14 @@ def normalize_conv(func):
             w = np.transpose(w, (3, 4, 0, 1, 2))
             if kwargs['data_format'] == 'channels_last':
                 x = np.transpose(x, (0, 4, 1, 2, 3))
+
+        dilation_rate = kwargs.pop('dilation_rate', 1)
+        if isinstance(dilation_rate, int):
+            dilation_rate = (dilation_rate,) * (x.ndim - 2)
+        for (i, d) in enumerate(dilation_rate):
+            if d > 1:
+                for j in range(w.shape[2 + i] - 1):
+                    w = np.insert(w, 2 * j + 1, 0, axis=2 + i)
 
         y = func(x, w, **kwargs)
 
@@ -79,12 +88,32 @@ def separable_conv(x, w1, w2, padding, data_format):
     return conv(x2, w2, padding=padding, data_format=data_format)
 
 
+def conv_transpose(x, w, output_shape, padding, data_format, dilation_rate=1):
+    if x.ndim == 4:
+        w = np.fliplr(np.flipud(w))
+        w = np.transpose(w, (0, 1, 3, 2))
+    else:
+        w = np.flip(np.fliplr(np.flipud(w)), axis=2)
+        w = np.transpose(w, (0, 1, 2, 4, 3))
+
+    if isinstance(dilation_rate, int):
+        dilation_rate = (dilation_rate,) * (x.ndim - 2)
+    for (i, d) in enumerate(dilation_rate):
+        if d > 1:
+            for j in range(w.shape[i] - 1):
+                w = np.insert(w, 2 * j + 1, 0, axis=i)
+
+    return conv(x, w, padding=padding, data_format=data_format)
+
+
 conv1d = conv
 conv2d = conv
 conv3d = conv
 depthwise_conv2d = depthwise_conv
 separable_conv1d = separable_conv
 separable_conv2d = separable_conv
+conv2d_transpose = conv_transpose
+conv3d_transpose = conv_transpose
 
 
 def pool(x, pool_size, strides, padding, data_format, pool_mode):
@@ -226,10 +255,11 @@ def in_test_phase(x, alt, training=None):
     return in_train_phase(alt, x, training=training)
 
 
-def relu(x, alpha=0., max_value=None):
-    y = x * (x > 0) + alpha * x * (x < 0)
+def relu(x, alpha=0., max_value=None, threshold=0.):
+    y = x * (x >= threshold)
     if max_value is not None:
-        y = np.minimum(y, max_value)
+        y = np.clip(y, 0.0, max_value)
+    y += alpha * (x - threshold) * (x < threshold)
     return y
 
 
@@ -402,6 +432,24 @@ def repeat(x, n):
     return y
 
 
+def temporal_padding(x, padding=(1, 1)):
+    return np.pad(x, [(0, 0), padding, (0, 0)], mode='constant')
+
+
+def spatial_2d_padding(x, padding=((1, 1), (1, 1)), data_format=None):
+    all_dims_padding = ((0, 0),) + padding + ((0, 0),)
+    all_dims_padding = transpose_shape(all_dims_padding, data_format,
+                                       spatial_axes=(1, 2))
+    return np.pad(x, all_dims_padding, mode='constant')
+
+
+def spatial_3d_padding(x, padding=((1, 1), (1, 1), (1, 1)), data_format=None):
+    all_dims_padding = ((0, 0),) + padding + ((0, 0),)
+    all_dims_padding = transpose_shape(all_dims_padding, data_format,
+                                       spatial_axes=(1, 2, 3))
+    return np.pad(x, all_dims_padding, mode='constant')
+
+
 def tile(x, n):
     return np.tile(x, n)
 
@@ -418,8 +466,28 @@ def batch_flatten(x):
     return np.reshape(x, (x.shape[0], -1))
 
 
+def gather(reference, indices):
+    return reference[indices]
+
+
 def eval(x):
     return x
+
+
+def get_value(x):
+    return x
+
+
+def count_params(x):
+    return x.size
+
+
+def int_shape(x):
+    return x.shape
+
+
+def get_variable_shape(x):
+    return int_shape(x)
 
 
 def dtype(x):
@@ -441,12 +509,46 @@ def print_tensor(x, message=''):
     return x
 
 
-def eye(size, dtype=None, name=None):
-    return np.eye(size, dtype=dtype)
-
-
 def dot(x, y):
     return np.dot(x, y)
+
+
+def batch_dot(x, y, axes=None):
+    if isinstance(axes, int):
+        axes = (axes, axes)
+    if axes is None:
+        # behaves like tf.batch_matmul as default
+        axes = [x.ndim - 1, y.ndim - 2]
+    if any([isinstance(a, (list, tuple)) for a in axes]):
+        raise ValueError('Multiple target dimensions are not supported. ' +
+                         'Expected: None, int, (int, int), ' +
+                         'Provided: ' + str(axes))
+    if x.ndim > y.ndim:
+        diff = x.ndim - y.ndim
+        y = np.reshape(y, np.concatenate([np.shape(y), [1] * diff], axis=0))
+    else:
+        diff = 0
+    if ndim(x) == 2 and ndim(y) == 2:
+        if axes[0] == axes[1]:
+            out = np.sum(np.multiply(x, y), axes[0])
+        else:
+            out = np.sum(np.multiply(np.transpose(x, [1, 0]), y), axes[1])
+    else:
+        out = np.tensordot(x, y, axes=axes)
+        for axis in [axes[0]]:
+            axis_list = np.arange(len(out.shape) - 1).tolist()
+            axis_list.insert(0, axis_list.pop(axis))
+            out = np.transpose(np.diagonal(out, axis1=0, axis2=axis),
+                               tuple(axis_list))
+    if diff:
+        if x.ndim > y.ndim:
+            idx = x.ndim + y.ndim - 3
+        else:
+            idx = x.ndim - 1
+        out = np.squeeze(out, tuple(range(idx, idx + diff)))
+    if ndim(out) == 1:
+        out = expand_dims(out, 1)
+    return out
 
 
 def transpose(x):
@@ -466,6 +568,19 @@ def variable(value, dtype=None, name=None, constraint=None):
         raise TypeError("Constraint must be None when "
                         "using the NumPy backend.")
     return np.array(value, dtype)
+
+
+def dropout(x, level, noise_shape=None, seed=None):
+    if noise_shape is None:
+        noise_shape = x.shape
+    if learning_phase():
+        noise = np.random.choice([0, 1],
+                                 noise_shape,
+                                 replace=True,
+                                 p=[level, 1 - level])
+        return x * noise / (1 - level)
+    else:
+        return x
 
 
 def equal(x, y):
@@ -500,12 +615,36 @@ def minimum(x, y):
     return np.minimum(x, y)
 
 
+def ndim(x):
+    return x.ndim
+
+
 def random_uniform_variable(shape, low, high, dtype=None, name=None, seed=None):
     return (high - low) * np.random.random(shape).astype(dtype) + low
 
 
 def random_normal_variable(shape, mean, scale, dtype=None, name=None, seed=None):
     return scale * np.random.randn(*shape).astype(dtype) + mean
+
+
+def zeros(shape, dtype=floatx(), name=None):
+    return np.zeros(shape, dtype=dtype)
+
+
+def zeros_like(x, dtype=floatx(), name=None):
+    return np.zeros_like(x, dtype=dtype)
+
+
+def ones(shape, dtype=floatx(), name=None):
+    return np.ones(shape, dtype=dtype)
+
+
+def ones_like(x, dtype=floatx(), name=None):
+    return np.ones_like(x, dtype=dtype)
+
+
+def eye(size, dtype=None, name=None):
+    return np.eye(size, dtype=dtype)
 
 
 def resize_images(x, height_factor, width_factor, data_format):
@@ -538,3 +677,5 @@ round = np.round
 sign = np.sign
 expand_dims = np.expand_dims
 squeeze = np.squeeze
+cos = np.cos
+sin = np.sin

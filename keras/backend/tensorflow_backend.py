@@ -1588,18 +1588,20 @@ def clip(x, min_value, max_value):
 
     # Arguments
         x: Tensor or variable.
-        min_value: Python float or integer.
-        max_value: Python float or integer.
+        min_value: Python float, integer or tensor.
+        max_value: Python float, integer or tensor.
 
     # Returns
         A tensor.
     """
-    if max_value is not None and max_value < min_value:
-        max_value = min_value
+    if (isinstance(min_value, (int, float)) and
+            isinstance(max_value, (int, float))):
+        if max_value < min_value:
+            max_value = min_value
+    if min_value is None:
+        min_value = -np.inf
     if max_value is None:
         max_value = np.inf
-    min_value = _to_tensor(min_value, x.dtype.base_dtype)
-    max_value = _to_tensor(max_value, x.dtype.base_dtype)
     return tf.clip_by_value(x, min_value, max_value)
 
 
@@ -1905,17 +1907,17 @@ def batch_normalization(x, mean, var, beta, gamma, axis=-1, epsilon=1e-3):
             # The mean / var / beta / gamma may be processed by broadcast
             # so it may have extra axes with 1, it is not needed and should be removed
             if ndim(mean) > 1:
-                mean = tf.reshape(mean, (-1))
+                mean = tf.reshape(mean, [-1])
             if ndim(var) > 1:
-                var = tf.reshape(var, (-1))
+                var = tf.reshape(var, [-1])
             if beta is None:
                 beta = zeros_like(mean)
             elif ndim(beta) > 1:
-                beta = tf.reshape(beta, (-1))
+                beta = tf.reshape(beta, [-1])
             if gamma is None:
                 gamma = ones_like(mean)
             elif ndim(gamma) > 1:
-                gamma = tf.reshape(gamma, (-1))
+                gamma = tf.reshape(gamma, [-1])
             y, _, _ = tf.nn.fused_batch_norm(
                 x,
                 gamma,
@@ -3148,30 +3150,55 @@ def in_test_phase(x, alt, training=None):
 
 # NN OPERATIONS
 
-def relu(x, alpha=0., max_value=None):
+def relu(x, alpha=0., max_value=None, threshold=0.):
     """Rectified linear unit.
 
     With default values, it returns element-wise `max(x, 0)`.
 
+    Otherwise, it follows:
+    `f(x) = max_value` for `x >= max_value`,
+    `f(x) = x` for `threshold <= x < max_value`,
+    `f(x) = alpha * (x - threshold)` otherwise.
+
     # Arguments
         x: A tensor or variable.
         alpha: A scalar, slope of negative section (default=`0.`).
-        max_value: Saturation threshold.
+        max_value: float. Saturation threshold.
+        threshold: float. Threshold value for thresholded activation.
 
     # Returns
         A tensor.
     """
-    if alpha == 0 and max_value == 6:
-        return tf.nn.relu6(x)
 
     if alpha != 0.:
-        x = tf.nn.leaky_relu(x, alpha)
+        if max_value is None and threshold == 0.:
+            return tf.nn.leaky_relu(x, alpha=alpha)
+
+        if threshold != 0.:
+            negative_part = tf.nn.relu(-x + threshold)
+        else:
+            negative_part = tf.nn.relu(-x)
+
+    clip_max = max_value is not None
+
+    if threshold != 0:
+        # computes x for x > threshold else 0
+        x = x * tf.cast(tf.greater(x, threshold), floatx())
+    elif max_value == 6:
+        # if no threshold, then can use nn.relu6 native TF op for performance
+        x = tf.nn.relu6(x)
+        clip_max = False
     else:
         x = tf.nn.relu(x)
 
-    if max_value is not None:
+    if clip_max:
         max_value = _to_tensor(max_value, x.dtype.base_dtype)
-        x = tf.minimum(x, max_value)
+        zero = _to_tensor(0., x.dtype.base_dtype)
+        x = tf.clip_by_value(x, zero, max_value)
+
+    if alpha != 0:
+        alpha = _to_tensor(alpha, x.dtype.base_dtype)
+        x -= alpha * negative_part
     return x
 
 
